@@ -1,80 +1,115 @@
 import requests
-import json
 import pandas as pd
+import json
+import time
 import openpyxl
 
-# Конфигурация
+# Константы
 API_KEY = 'uiabkzvbelqx'
-API_URL = 'https://seo-utils.ru/task/search_engine_parser_3/'
-HEADERS = {'Authorization': f'Bearer {API_KEY}'}
+API_URL_SUBMIT = f'http://seo-utils.ru/api/submit_task/{API_KEY}/'
+API_URL_RESULT = f'http://seo-utils.ru/api/get_task_result/{API_KEY}/'
 
-# Загрузка регионов из файла regions.json
-with open('regions.json', 'r', encoding='utf-8') as f:
-    regions = json.load(f)
 
-# Пример выбора региона
-region_name = "Москва"  # Укажите нужный регион
-selected_region = None
-
-for region in regions:
-    if region_name in region['region']:
-        selected_region = region['region']
-        break
-
-if selected_region:
-    print(f"Выбранный регион: {selected_region}")
-else:
-    print("Регион не найден.")
-
-# Функция для проверки отзыва
-def check_review(review_text, region='Москва'):
-    params = {
-        'query': review_text,
-        'search_engine': 'yandex',
-        'region': region,
-        'count': 1  # Получаем только первую позицию
+# Функция для отправки задачи
+def submit_task(queries, region):
+    task_data = {
+        'name': 'SearchEngineParser3',
+        'args': {
+            'search-engine': 'yandex',
+            'host': 'www.yandex.ru',
+            'region': region,  # Передаем регион как строку
+            'queries': queries  # Список всех текстов отзывов
+        },
+        'opts': {
+            'domains': ['napopravku.ru']
+        }
     }
-    response = requests.get(API_URL, headers=HEADERS, params=params)
+    response = requests.post(API_URL_SUBMIT, json=task_data)
     return response.json()
 
 
-# Чтение отзывов из файла Excel
-reviews_df = pd.read_excel('Отзывы.xlsx')  # Читаем файл Excel
-reviews_df = reviews_df[reviews_df['Отзыв'].str.len() > 30]  # Фильтрация отзывов по длине
+# Функция для получения результата задачи
+def get_task_result(task_id, max_retries=5):
+    for attempt in range(max_retries):
+        time.sleep(10)
+        response = requests.get(f'{API_URL_RESULT}/{task_id}/')
+        result = response.json()
+        if result.get('success') and result['result'].get('is_finished'):
+            return result
+        elif attempt == max_retries - 1:
+            raise Exception(f"Задача {task_id} не завершилась после {max_retries} попыток.")
+    return None
 
-# Список для хранения результатов
-results = []
 
-# Проверка отзывов
-for index, row in reviews_df.iterrows():
-    review_text = row['Отзыв']  # Предполагается, что колонка с отзывами называется 'Отзыв'
-    result = check_review(review_text)
+# Функция для анализа отзывов
+def analyze_reviews(reviews_df, region):
+    valid_reviews = reviews_df[reviews_df['text'].str.len() > 30].dropna(subset=['text'])
+    queries = valid_reviews['text'].tolist()
 
-    # Проверка на наличие результатов
-    if result and 'results' in result and len(result['results']) > 0:
-        first_result = result['results'][0]
-        site = first_result['site']
-        link = first_result['link']
+    if not queries:
+        return [], 0, 0, 0  # Нет валидных отзывов
 
-        if 'napopravku' in site.lower():
-            results.append({'Отзыв': review_text, 'Ссылка': link, 'Статус': 'Уникальный отзыв'})
+    # Отправляем одну задачу со всеми запросами
+    response = submit_task(queries, region)
+    if not response.get('success'):
+        raise Exception(f"Ошибка отправки задачи: {response.get('reason', 'Неизвестная ошибка')}")
+
+    task_id = response['result']['task_id']
+    result_response = get_task_result(task_id)
+
+    if not result_response or not result_response.get('success'):
+        raise Exception("Ошибка получения результата задачи.")
+
+    data = result_response['result']['data']
+
+    results = []
+    unique_count = 0
+    competitor_count = 0
+    total_checked = len(data)
+
+    for i, item in enumerate(data):
+        review_text = queries[i]  # Текст отзыва
+        first_result = item[0] if item else None
+        if first_result:
+            link = first_result['link']
+            domain = link.split('/')[2] if '//' in link else link.split('/')[0]
+            if 'napopravku.ru' in domain:
+                unique_count += 1
+                results.append((review_text, link, 'Уникальный отзыв'))
+            else:
+                competitor_count += 1
+                results.append((review_text, link, 'Первоисточник конкурент'))
         else:
-            results.append({'Отзыв': review_text, 'Ссылка': link, 'Статус': 'Первоисточник конкурент'})
-    else:
-        results.append({'Отзыв': review_text, 'Ссылка': None, 'Статус': 'Нет результатов'})
+            results.append((review_text, 'Нет результатов', 'Нет данных'))
 
-# Создание DataFrame с результатами
-results_df = pd.DataFrame(results)
+    return results, total_checked, unique_count, competitor_count
 
-# Сохранение результатов в файл Excel
-results_df.to_excel('Результаты.xlsx', index=False)
 
-# Подсчет статистики
-total_reviews = len(results_df)
-unique_reviews = len(results_df[results_df['Статус'] == 'Уникальный отзыв'])
-competitor_sources = len(results_df[results_df['Статус'] == 'Первоисточник конкурент'])
+# Основной код
+def main():
+    # Загружаем отзывы
+    reviews_df = pd.read_excel('Отзывы.xlsx')
 
-# Вывод статистики
-print(f'Всего проверено: {total_reviews}')
-print(f'Уникальных отзывов: {unique_reviews}')
-print(f'Первоисточник конкурент: {competitor_sources}')
+    # Загружаем регионы и выбираем (например, по ID "1" — Москва)
+    with open('regions.json', 'r', encoding='utf-8') as f:
+        regions = json.load(f)
+
+    # Выбираем регион
+    selected_region = next((r for r in regions if r['props']['id'] == '1'), regions[0])['region']
+    print(f"Используемый регион: {selected_region}")
+
+    # Анализируем
+    results, total_checked, unique_count, competitor_count = analyze_reviews(reviews_df, selected_region)
+
+    # Сохраняем результаты
+    results_df = pd.DataFrame(results, columns=['Отзыв', 'Ссылка', 'Тип'])
+    results_df.to_excel('Итоги.xlsx', index=False)
+
+    # Выводим статистику
+    print(f'Всего проверено: {total_checked}')
+    print(f'Уникальных отзывов: {unique_count}')
+    print(f'Первоисточник конкурент: {competitor_count}')
+
+
+if __name__ == '__main__':
+    main()
