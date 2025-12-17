@@ -87,8 +87,8 @@ def analyze_reviews(reviews_df, region):
 
 # Основной код
 def main():
-    # Загружаем отзывы
-    reviews_df = pd.read_excel('Отзывы.xlsx')
+    # Загружаем отзывы из CSV
+    reviews_df = pd.read_csv('Отзывы.csv', encoding='utf-8')
 
     # Загружаем регионы и выбираем (например, по ID "1" — Москва)
     with open('regions.json', 'r', encoding='utf-8') as f:
@@ -103,7 +103,7 @@ def main():
 
     # Сохраняем результаты
     results_df = pd.DataFrame(results, columns=['Отзыв', 'Ссылка', 'Тип'])
-    results_df.to_excel('Итоги.xlsx', index=False)
+    results_df.to_csv('Итоги.csv', index=False)
 
     # Выводим статистику
     print(f'Всего проверено: {total_checked}')
