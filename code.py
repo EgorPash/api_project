@@ -9,66 +9,84 @@ API_KEY = 'uiabkzvbelqx'
 API_URL_SUBMIT = f'http://seo-utils.ru/api/submit_task/{API_KEY}/'
 API_URL_RESULT = f'http://seo-utils.ru/api/get_task_result/{API_KEY}/'
 
+# Жестко заданные регион и city ID для Москвы (номер региона: 213, city ID: 213)
+REGION_ID = '263'  # Номер региона для Yandex (Москва)
+CITY_ID = '263'    # Соответствующий city ID
 
-# Функция для отправки задачи
-def submit_task(queries, region):
+# Основной код
+def main():
+    try:
+        # Загружаем отзывы из CSV
+        reviews_df = pd.read_csv('Отзывы.csv', sep=';', header=0, encoding='utf-8')
+        print("CSV загружен успешно.")
+    except pd.errors.ParserError as e:
+        print(f"Ошибка парсинга CSV: {e}. Проверьте разделитель и кодировку.")
+        return
+    except FileNotFoundError:
+        print("Файл 'Отзывы.csv' не найден.")
+        return
+    except Exception as e:
+        print(f"Ошибка загрузки CSV: {e}")
+        return
+
+    # Фильтруем отзывы (длина >30, без NaN)
+    valid_reviews = reviews_df[reviews_df['text'].str.len() > 30].dropna(subset=['text'])
+    queries = valid_reviews['text'].tolist()
+
+    if not queries:
+        print("Нет валидных отзывов.")
+        return
+
+    # Отправляем задачу
     task_data = {
         'name': 'SearchEngineParser3',
         'args': {
             'search-engine': 'yandex',
             'host': 'www.yandex.ru',
-            'region': region,  # Передаем регион как строку
-            'queries': queries  # Список всех текстов отзывов
+            'region': REGION_ID,  # Используем ID региона
+            'city': CITY_ID,      # Добавляем city ID для точности
+            'queries': queries
         },
-        'opts': {
-            'domains': ['napopravku.ru']
-        }
+        'opts': {}
     }
     response = requests.post(API_URL_SUBMIT, json=task_data)
-    return response.json()
+    try:
+        response_data = response.json()
+    except json.JSONDecodeError:
+        print(f"Ошибка декодирования JSON: {response.text}")
+        return
 
+    if not response_data.get('success'):
+        print(f"Ошибка отправки: {response_data.get('reason')}")
+        return
 
-# Функция для получения результата задачи
-def get_task_result(task_id, max_retries=5):
-    for attempt in range(max_retries):
-        time.sleep(10)
-        response = requests.get(f'{API_URL_RESULT}/{task_id}/')
-        result = response.json()
+    task_id = response_data['result']['task_id']
+
+    # Ждем результат
+    for attempt in range(5):
+        time.sleep(30)
+        result_response = requests.get(f'{API_URL_RESULT}/{task_id}/')
+        try:
+            result = result_response.json()
+        except json.JSONDecodeError:
+            print(f"Попытка {attempt + 1}: Ошибка JSON, повтор.")
+            continue
         if result.get('success') and result['result'].get('is_finished'):
-            return result
-        elif attempt == max_retries - 1:
-            raise Exception(f"Задача {task_id} не завершилась после {max_retries} попыток.")
-    return None
+            break
+    else:
+        print("Задача не завершилась.")
+        return
 
+    data = result['result']['data']
 
-# Функция для анализа отзывов
-def analyze_reviews(reviews_df, region):
-    valid_reviews = reviews_df[reviews_df['text'].str.len() > 30].dropna(subset=['text'])
-    queries = valid_reviews['text'].tolist()
-
-    if not queries:
-        return [], 0, 0, 0  # Нет валидных отзывов
-
-    # Отправляем одну задачу со всеми запросами
-    response = submit_task(queries, region)
-    if not response.get('success'):
-        raise Exception(f"Ошибка отправки задачи: {response.get('reason', 'Неизвестная ошибка')}")
-
-    task_id = response['result']['task_id']
-    result_response = get_task_result(task_id)
-
-    if not result_response or not result_response.get('success'):
-        raise Exception("Ошибка получения результата задачи.")
-
-    data = result_response['result']['data']
-
+    # Анализируем результаты
     results = []
     unique_count = 0
     competitor_count = 0
     total_checked = len(data)
 
     for i, item in enumerate(data):
-        review_text = queries[i]  # Текст отзыва
+        review_text = queries[i]
         first_result = item[0] if item else None
         if first_result:
             link = first_result['link']
@@ -82,34 +100,14 @@ def analyze_reviews(reviews_df, region):
         else:
             results.append((review_text, 'Нет результатов', 'Нет данных'))
 
-    return results, total_checked, unique_count, competitor_count
-
-
-# Основной код
-def main():
-    # Загружаем отзывы из CSV
-    reviews_df = pd.read_csv('Отзывы.csv', encoding='utf-8')
-
-    # Загружаем регионы и выбираем (например, по ID "1" — Москва)
-    with open('regions.json', 'r', encoding='utf-8') as f:
-        regions = json.load(f)
-
-    # Выбираем регион
-    selected_region = next((r for r in regions if r['props']['id'] == '1'), regions[0])['region']
-    print(f"Используемый регион: {selected_region}")
-
-    # Анализируем
-    results, total_checked, unique_count, competitor_count = analyze_reviews(reviews_df, selected_region)
-
-    # Сохраняем результаты
+    # Сохраняем
     results_df = pd.DataFrame(results, columns=['Отзыв', 'Ссылка', 'Тип'])
-    results_df.to_csv('Итоги.csv', index=False)
+    results_df.to_csv('Итоги.csv', index=False, encoding='utf-8')
 
-    # Выводим статистику
+    # Статистика
     print(f'Всего проверено: {total_checked}')
     print(f'Уникальных отзывов: {unique_count}')
     print(f'Первоисточник конкурент: {competitor_count}')
-
 
 if __name__ == '__main__':
     main()
