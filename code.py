@@ -9,8 +9,8 @@ API_KEY = 'uiabkzvbelqx'
 API_URL_SUBMIT = f'http://seo-utils.ru/api/submit_task/{API_KEY}/'
 API_URL_RESULT = f'http://seo-utils.ru/api/get_task_result/{API_KEY}/'
 
-# Жестко заданные регион и city ID для Москвы (номер региона: 213, city ID: 213)
-REGION_ID = '263'  # Номер региона для Yandex (Москва)
+# Жестко заданные регион и city ID для Москвы (номер региона: 263, city ID: 263)
+REGION_ID = '213'  # Номер региона для Yandex (Москва)
 CITY_ID = '263'    # Соответствующий city ID
 
 # Основной код
