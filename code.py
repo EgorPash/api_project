@@ -2,16 +2,11 @@ import requests
 import pandas as pd
 import json
 import time
-import openpyxl
 
 # Константы
 API_KEY = 'uiabkzvbelqx'
 API_URL_SUBMIT = f'http://seo-utils.ru/api/submit_task/{API_KEY}/'
 API_URL_RESULT = f'http://seo-utils.ru/api/get_task_result/{API_KEY}/'
-
-# Жестко заданные регион и city ID для Москвы (номер региона: 263, city ID: 263)
-REGION_ID = '213'  # Номер региона для Yandex (Москва)
-CITY_ID = '263'    # Соответствующий city ID
 
 # Основной код
 def main():
@@ -37,18 +32,26 @@ def main():
         print("Нет валидных отзывов.")
         return
 
-    # Отправляем задачу
+    serp_size = max(10, len(queries))
     task_data = {
         'name': 'SearchEngineParser3',
         'args': {
             'search-engine': 'yandex',
             'host': 'www.yandex.ru',
-            'region': REGION_ID,  # Используем ID региона
-            'city': CITY_ID,      # Добавляем city ID для точности
+            'region': 'Москва',
             'queries': queries
         },
-        'opts': {}
+        'opts': {
+            'serp-size': serp_size,
+            'results-deep': 1,
+            'device': 'mobile_android',
+            'results': 1,
+            'ads': 0,
+            'titles': 0,
+            'texts': 0
+        }
     }
+
     response = requests.post(API_URL_SUBMIT, json=task_data)
     try:
         response_data = response.json()
@@ -61,9 +64,11 @@ def main():
         return
 
     task_id = response_data['result']['task_id']
+    print(f"Задача отправлена, ID: {task_id}")
 
-    # Ждем результат
-    for attempt in range(5):
+    # Ждем результат (до 20 попыток по 30 сек, итого ~10 мин)
+    for attempt in range(20):
+        print(f"Попытка {attempt + 1}: проверка статуса...")
         time.sleep(30)
         result_response = requests.get(f'{API_URL_RESULT}/{task_id}/')
         try:
@@ -74,7 +79,7 @@ def main():
         if result.get('success') and result['result'].get('is_finished'):
             break
     else:
-        print("Задача не завершилась.")
+        print("Задача не завершилась в отведенное время.")
         return
 
     data = result['result']['data']
@@ -87,10 +92,14 @@ def main():
 
     for i, item in enumerate(data):
         review_text = queries[i]
-        first_result = item[0] if item else None
-        if first_result:
+        if item:  # Если есть результаты
+            first_result = item[0]
             link = first_result['link']
-            domain = link.split('/')[2] if '//' in link else link.split('/')[0]
+            # Извлекаем домен (учитываем протокол)
+            if '//' in link:
+                domain = link.split('/')[2].lower()
+            else:
+                domain = link.split('/')[0].lower()
             if 'napopravku.ru' in domain:
                 unique_count += 1
                 results.append((review_text, link, 'Уникальный отзыв'))
@@ -100,9 +109,14 @@ def main():
         else:
             results.append((review_text, 'Нет результатов', 'Нет данных'))
 
-    # Сохраняем
+    # Сохраняем результаты в CSV
     results_df = pd.DataFrame(results, columns=['Отзыв', 'Ссылка', 'Тип'])
-    results_df.to_csv('Итоги.csv', index=False, encoding='utf-8')
+    try:
+        results_df.to_csv('Итоги.csv', index=False, encoding='utf-8')
+        print("Результаты сохранены в 'Итоги.csv'.")
+    except Exception as e:
+        print(f"Ошибка сохранения CSV: {e}")
+        return
 
     # Статистика
     print(f'Всего проверено: {total_checked}')
