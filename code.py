@@ -44,7 +44,7 @@ def main():
         'opts': {
             'serp-size': serp_size,
             'results-deep': 1,
-            'device': 'mobile_android',
+            'device': 'computer',
             'results': 1,
             'ads': 0,
             'titles': 0,
